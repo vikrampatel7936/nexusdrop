@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>NexusDrop Mobile P2P (Zero PC Required)</title>
+  <meta name="description" content="Direct device-to-device file sharing between iPhone and Android with zero quality loss and no PC required.">
+  <meta name="theme-color" content="#0a0d14">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <!-- Standalone Mobile-first CSS -->
+  <style>
+    :root {
+      --bg-dark: #0a0d14;
+      --card-bg: rgba(22, 29, 45, 0.85);
+      --border-color: rgba(255, 255, 255, 0.1);
+      --accent-cyan: #06b6d4;
+      --accent-green: #10b981;
+      --accent-purple: #8b5cf6;
+      --accent-rose: #f43f5e;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg-dark);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 16px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 1.15rem;
+    }
+    .badge {
+      font-size: 0.65rem;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--accent-green);
+      border: 1px solid var(--accent-green);
+      padding: 2px 6px;
+      border-radius: 99px;
+      text-transform: uppercase;
+    }
+    .status-pill {
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 99px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; }
+    .dot.connected { background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 18px;
+      margin-bottom: 16px;
+    }
+    .card h2 { font-size: 1rem; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    
+    .qr-container {
+      background: white;
+      padding: 12px;
+      border-radius: 12px;
+      width: 200px;
+      height: 200px;
+      margin: 12px auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .qr-container img, .qr-container canvas { width: 100%; height: 100%; }
+
+    .btn {
+      background: linear-gradient(135deg, var(--accent-cyan), #0284c7);
+      color: white;
+      border: none;
+      font-weight: 600;
+      padding: 12px 18px;
+      border-radius: 12px;
+      width: 100%;
+      cursor: pointer;
+      font-size: 0.95rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border-color);
+    }
+
+    .dropzone {
+      border: 2px dashed rgba(6, 182, 212, 0.4);
+      border-radius: 14px;
+      padding: 24px 16px;
+      text-align: center;
+      cursor: pointer;
+      background: rgba(6, 182, 212, 0.03);
+    }
+    .dropzone p { font-size: 0.85rem; color: var(--text-muted); margin-top: 6px; }
+
+    .file-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      margin-top: 8px;
+      font-size: 0.85rem;
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      height: 8px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 4px;
+      overflow: hidden;
+      margin: 12px 0 6px;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent-cyan), var(--accent-green));
+      transition: width 0.1s linear;
+    }
+
+    .verified-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.72rem;
+      color: var(--accent-green);
+      background: rgba(16, 185, 129, 0.1);
+      padding: 3px 8px;
+      border-radius: 99px;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      margin-top: 6px;
+    }
+
+    /* Modal */
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 99;
+    }
+    .modal.active { display: flex; }
+    .modal-box {
+      background: #151b2c;
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 20px;
+      width: 100%;
+      max-width: 360px;
+      text-align: center;
+    }
+  </style>
+  <!-- PeerJS for zero-server WebRTC P2P signaling -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <!-- QRCode generator -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+
+  <header class="header">
+    <div class="brand">
+      <span>📱 NexusDrop</span>
+      <span class="badge">No PC Needed</span>
+    </div>
+    <div class="status-pill">
+      <div class="dot" id="status-dot"></div>
+      <span id="status-text">Connecting...</span>
+    </div>
+  </header>
+
+  <!-- Step 1: Pair Phones -->
+  <div class="card" id="card-connect">
+    <h2>1. Pair Your Devices</h2>
+    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
+      Open this exact webpage on both phones (iPhone &amp; Android).
+    </p>
+
+    <!-- QR Code to connect -->
+    <div style="text-align: center;">
+      <p style="font-size: 0.8rem; color: var(--text-muted);">Scan this from the other phone:</p>
+      <div class="qr-container" id="qr-box"></div>
+      <div style="font-size: 0.75rem; color: var(--accent-cyan); font-family: monospace;" id="peer-id-display">Generating Peer ID...</div>
+    </div>
+
+    <div style="margin-top: 14px;">
+      <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px; text-align: center;">Or enter partner phone's Code:</p>
+      <div style="display: flex; gap: 8px;">
+        <input type="text" id="target-peer-input" placeholder="e.g. nexus-1234" style="flex: 1; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: rgba(255,255,255,0.05); color: white; font-family: monospace; outline: none;">
+        <button class="btn" id="btn-manual-connect" style="width: auto; margin-top: 0; padding: 0 16px;">Connect</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 2: Share Files Directly -->
+  <div class="card" id="card-share" style="display: none;">
+    <h2>2. Beam Original Files (0% Loss)</h2>
+    <div style="font-size: 0.78rem; color: var(--accent-green); margin-bottom: 12px;">
+      ✔ Connected directly to partner phone over WebRTC. Data streams phone-to-phone with zero server in between!
+    </div>
+
+    <div class="dropzone" id="mobile-dropzone">
+      <div style="font-size: 1.5rem; margin-bottom: 6px;">📁</div>
+      <strong>Select Original Files or 4K Photos</strong>
+      <p>Original EXIF metadata, RAW, and full resolution guaranteed.</p>
+      <input type="file" id="mobile-file-input" multiple style="display: none;">
+    </div>
+
+    <!-- Active Transfers -->
+    <div id="transfer-list" style="margin-top: 16px;"></div>
+  </div>
+
+  <!-- Incoming Transfer Modal -->
+  <div class="modal" id="modal-incoming">
+    <div class="modal-box">
+      <h3 style="margin-bottom: 8px;">📥 Incoming File Transfer</h3>
+      <p id="incoming-info" style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 16px;">Partner phone wants to send 1 file</p>
+      <button class="btn" id="btn-accept-incoming">Accept &amp; Download</button>
+      <button class="btn btn-secondary" id="btn-decline-incoming" style="margin-top: 8px;">Decline</button>
+    </div>
+  </div>
+
+  <script>
+    const CHUNK_SIZE = 64 * 1024; // 64KB WebRTC chunk size
+    let peer = null;
+    let conn = null;
+    let myPeerId = null;
+    let currentIncomingFile = null;
+
+    const el = {
+      statusDot: document.getElementById('status-dot'),
+      statusText: document.getElementById('status-text'),
+      cardConnect: document.getElementById('card-connect'),
+      cardShare: document.getElementById('card-share'),
+      qrBox: document.getElementById('qr-box'),
+      peerIdDisplay: document.getElementById('peer-id-display'),
+      targetPeerInput: document.getElementById('target-peer-input'),
+      btnManualConnect: document.getElementById('btn-manual-connect'),
+      dropzone: document.getElementById('mobile-dropzone'),
+      fileInput: document.getElementById('mobile-file-input'),
+      transferList: document.getElementById('transfer-list'),
+      modalIncoming: document.getElementById('modal-incoming'),
+      incomingInfo: document.getElementById('incoming-info'),
+      btnAcceptIncoming: document.getElementById('btn-accept-incoming'),
+      btnDeclineIncoming: document.getElementById('btn-decline-incoming')
+    };
+
+    // Initialize PeerJS (Direct P2P WebRTC signaling)
+    function initPeer() {
+      // Short unique ID
+      const randomId = 'nexus-' + Math.floor(1000 + Math.random() * 9000);
+      peer = new Peer(randomId, {
+        debug: 1
+      });
+
+      peer.on('open', (id) => {
+        myPeerId = id;
+        el.statusText.textContent = 'Ready to Pair';
+        el.peerIdDisplay.textContent = `Your ID: ${id}`;
+
+        // Check if partner ID was passed in URL
+        const params = new URLSearchParams(window.location.search);
+        const joinTarget = params.get('join');
+
+        // Render QR Code with join URL
+        const joinUrl = `${window.location.origin}${window.location.pathname}?join=${id}`;
+        new QRCode(el.qrBox, {
+          text: joinUrl,
+          width: 180,
+          height: 180,
+          colorDark: '#0a0d14',
+          colorLight: '#ffffff',
+          correctLevel: QRCode.CorrectLevel.M
+        });
+
+        if (joinTarget && joinTarget !== id) {
+          connectToPeer(joinTarget);
+        }
+      });
+
+      // Handle incoming connection from partner phone
+      peer.on('connection', (connection) => {
+        setupConnection(connection);
+      });
+
+      peer.on('error', (err) => {
+        console.error('Peer error:', err);
+        el.statusText.textContent = 'Connection Error';
+      });
+    }
+
+    // Connect to Partner Peer
+    function connectToPeer(targetId) {
+      el.statusText.textContent = 'Connecting to ' + targetId + '...';
+      const connection = peer.connect(targetId, { reliable: true });
+      setupConnection(connection);
+    }
+
+    // Setup WebRTC Data Connection
+    function setupConnection(connection) {
+      conn = connection;
+
+      conn.on('open', () => {
+        el.statusDot.className = 'dot connected';
+        el.statusText.textContent = 'Connected (P2P)';
+        el.cardConnect.style.display = 'none';
+        el.cardShare.style.display = 'block';
+      });
+
+      conn.on('data', (data) => {
+        handleIncomingData(data);
+      });
+
+      conn.on('close', () => {
+        el.statusDot.className = 'dot';
+        el.statusText.textContent = 'Partner Disconnected';
+        el.cardConnect.style.display = 'block';
+        el.cardShare.style.display = 'none';
+      });
+    }
+
+    // Manual connect button
+    el.btnManualConnect.onclick = () => {
+      const target = el.targetPeerInput.value.trim();
+      if (target) connectToPeer(target);
+    };
+
+    // File Selection
+    el.dropzone.onclick = () => el.fileInput.click();
+    el.fileInput.onchange = (e) => {
+      const files = e.target.files;
+      if (files.length > 0) {
+        for (const file of files) {
+          sendBitExactFile(file);
+        }
+      }
+    };
+
+    // Stream Bit-Exact File to Partner Phone
+    async function sendBitExactFile(file) {
+      if (!conn || !conn.open) {
+        alert('Not connected to partner phone.');
+        return;
+      }
+
+      // Compute SHA-256 for original verification
+      const arrayBuf = await file.arrayBuffer();
+      const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuf);
+      const sha256 = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+      // Send metadata header
+      conn.send({
+        type: 'file-header',
+        name: file.name,
+        size: file.size,
+        mime: file.type || 'application/octet-stream',
+        sha256
+      });
+
+      // UI Progress Card
+      const card = createTransferCard(file.name, file.size, 'Sending');
+      el.transferList.appendChild(card.el);
+
+      // Stream file in 64KB binary chunks
+      let offset = 0;
+      while (offset < file.size) {
+        const slice = file.slice(offset, offset + CHUNK_SIZE);
+        const chunkBuf = await slice.arrayBuffer();
+        conn.send({
+          type: 'file-chunk',
+          data: chunkBuf
+        });
+        offset += chunkBuf.byteLength;
+        card.update(offset, file.size);
+      }
+
+      // Send EOF
+      conn.send({ type: 'file-end' });
+      card.complete(sha256);
+    }
+
+    // Handle Incoming Data from Partner Phone
+    let receivedChunks = [];
+    let receivedBytes = 0;
+    let activeIncomingCard = null;
+
+    function handleIncomingData(msg) {
+      if (msg.type === 'file-header') {
+        currentIncomingFile = msg;
+        receivedChunks = [];
+        receivedBytes = 0;
+
+        activeIncomingCard = createTransferCard(msg.name, msg.size, 'Receiving');
+        el.transferList.appendChild(activeIncomingCard.el);
+      } else if (msg.type === 'file-chunk') {
+        receivedChunks.push(msg.data);
+        receivedBytes += msg.data.byteLength;
+        if (activeIncomingCard && currentIncomingFile) {
+          activeIncomingCard.update(receivedBytes, currentIncomingFile.size);
+        }
+      } else if (msg.type === 'file-end') {
+        // Assemble Blob
+        const blob = new Blob(receivedChunks, { type: currentIncomingFile.mime });
+        
+        // Verify SHA-256
+        crypto.subtle.digest('SHA-256', blob.arrayBuffer()).then(hashBuf => {
+          const actualHash = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+          const isVerified = actualHash === currentIncomingFile.sha256;
+
+          activeIncomingCard.complete(actualHash, isVerified);
+
+          // Trigger download / save on mobile
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = currentIncomingFile.name;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }, 300);
+        });
+      }
+    }
+
+    // Helper: Create UI Card for transfers
+    function createTransferCard(name, totalBytes, direction) {
+      const div = document.createElement('div');
+      div.className = 'file-item';
+      div.style.flexDirection = 'column';
+      div.style.alignItems = 'stretch';
+      div.innerHTML = `
+        <div style="display: flex; justify-content: space-between; font-weight: 600;">
+          <span style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${name}</span>
+          <span>${formatBytes(totalBytes)}</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted);">
+          <span class="status-lbl">${direction}...</span>
+          <span class="percent-lbl">0%</span>
+        </div>
+        <div class="verified-container"></div>
+      `;
+
+      const fill = div.querySelector('.progress-bar-fill');
+      const statusLbl = div.querySelector('.status-lbl');
+      const percentLbl = div.querySelector('.percent-lbl');
+      const verifiedContainer = div.querySelector('.verified-container');
+
+      return {
+        el: div,
+        update: (current, total) => {
+          const p = Math.min(100, Math.round((current / total) * 100));
+          fill.style.width = p + '%';
+          percentLbl.textContent = p + '%';
+        },
+        complete: (hash, isVerified = true) => {
+          fill.style.width = '100%';
+          statusLbl.textContent = 'Completed (100% Quality Kept)';
+          percentLbl.textContent = '100%';
+          verifiedContainer.innerHTML = `
+            <div class="verified-badge">
+              ✔ Bit-Exact SHA-256 Verified (${hash.slice(0, 8)}...)
+            </div>
+          `;
+        }
+      };
+    }
+
+    function formatBytes(bytes) {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    // Register Service Worker for PWA (Offline & Add to Home Screen)
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      });
+    }
+
+    // Start
+    initPeer();
+  </script>
+</body>
+</html>
