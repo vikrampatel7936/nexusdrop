@@ -16,7 +16,58 @@
   <script>if (typeof Peer === 'undefined') document.write('<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"><\/script>');</script>
   <script src="qrcode.min.js"></script>
   <script>if (typeof QRCode === 'undefined') document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>');</script>
+  <script src="mqttws31.min.js"></script>
+  <script>if (typeof Paho === 'undefined') document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"><\/script>');</script>
   <script src="exif-reader.js"></script>
+
+  <style>
+    /* Radar Orbiting Peer Nodes */
+    .radar-peer-node {
+      position: absolute;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #06b6d4, #8b5cf6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      box-shadow: 0 0 15px rgba(6, 182, 212, 0.5);
+      border: 2px solid rgba(255, 255, 255, 0.4);
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 10;
+    }
+    .radar-peer-node:hover {
+      transform: scale(1.15);
+      box-shadow: 0 0 25px rgba(6, 182, 212, 0.8);
+    }
+    .radar-peer-label {
+      position: absolute;
+      bottom: -18px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: #fff;
+      white-space: nowrap;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+      pointer-events: none;
+    }
+    .room-pill {
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: var(--radius-full);
+      background: rgba(6, 182, 212, 0.1);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+      color: var(--accent-cyan);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 6px;
+      cursor: pointer;
+    }
+  </style>
 </head>
 <body>
 
@@ -37,9 +88,9 @@
       </a>
 
       <div class="header-actions">
-        <div class="status-badge" id="btn-reconnect" style="cursor: pointer;" title="Tap to reconnect">
-          <span class="status-dot" id="connection-dot"></span>
-          <span id="connection-text">Connecting...</span>
+        <div class="status-badge" id="btn-reconnect" style="cursor: pointer;" title="Tap to refresh presence">
+          <span class="status-dot online" id="connection-dot"></span>
+          <span id="connection-text">Wi-Fi Scanning...</span>
         </div>
 
         <button class="btn-primary" id="btn-open-pair" style="padding: 8px 14px; font-size: 0.85rem;">
@@ -57,7 +108,7 @@
             <path d="M21 12v.01"></path>
             <path d="M12 21v-1"></path>
           </svg>
-          <span>Pair Device</span>
+          <span>Pair QR</span>
         </button>
       </div>
     </div>
@@ -77,14 +128,15 @@
           </svg>
           Nearby Devices
         </h2>
-        <span class="badge-count" id="peer-count-badge">0 Connected</span>
+        <span class="badge-count" id="peer-count-badge">Scanning Wi-Fi...</span>
       </div>
 
       <!-- Radar Visualizer -->
-      <div class="radar-container">
+      <div class="radar-container" id="radar-container-box">
         <div class="radar-sweep"></div>
         <div class="radar-pulse-ring"></div>
         
+        <!-- Center: This Device -->
         <div class="radar-center-device">
           <div class="center-device-avatar" id="my-device-avatar">
             <svg id="my-device-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -95,9 +147,12 @@
           <div class="center-device-name" id="my-device-name">My Phone</div>
           <div class="center-device-tag">This Device (You)</div>
         </div>
+
+        <!-- Orbiting Nodes are injected dynamically here -->
+        <div id="radar-nodes-overlay"></div>
       </div>
 
-      <!-- Connected Peer List -->
+      <!-- Nearby Peer List -->
       <div class="peer-list" id="peer-list-container">
         <div class="no-peers-notice" id="no-peers-notice">
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -105,20 +160,21 @@
             <path d="m9 9 6 6"></path>
             <path d="m15 9-6 6"></path>
           </svg>
-          <p>No partner device paired yet.</p>
+          <p>Looking for devices on the same Wi-Fi...</p>
+          <p style="font-size: 0.75rem; color: var(--accent-cyan); margin-top: 4px;">Open this website on your partner phone!</p>
           <button class="btn-secondary" id="btn-quick-pair-trigger" style="margin: 10px auto 0; padding: 6px 14px; font-size: 0.8rem;">
-            📱 Scan QR Code to Pair
+            📱 Or Scan QR Code to Pair
           </button>
         </div>
       </div>
 
-      <!-- Quick Manual Pair Input -->
-      <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-color);">
-        <p style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 6px;">Or pair with partner code:</p>
-        <div style="display: flex; gap: 8px;">
-          <input type="text" id="target-peer-input" placeholder="e.g. nx-abc123" style="flex: 1; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background: rgba(255,255,255,0.04); color: white; font-family: var(--font-mono); font-size: 0.82rem; outline: none;">
-          <button class="btn-secondary" id="btn-manual-connect" style="padding: 0 12px; font-size: 0.82rem;">Connect</button>
-        </div>
+      <!-- Quick Room / Manual Pair Box -->
+      <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size: 0.75rem; color: var(--text-dim);">Room:</span>
+        <button class="room-pill" id="btn-change-room" title="Click to change room name">
+          <span id="current-room-label">📶 Auto Wi-Fi</span>
+          <span>✏️</span>
+        </button>
       </div>
     </aside>
 
@@ -185,7 +241,7 @@
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"></path>
             <path d="m9 12 2 2 4-4"></path>
           </svg>
-          <span><strong>Zero Quality Loss Guaranteed:</strong> Transmitted bit-for-bit directly phone-to-phone over WebRTC. RAW camera profiles, 4K/8K HDR, full color spaces, and complete EXIF tags are 100% preserved.</span>
+          <span><strong>Zero Quality Loss Guaranteed:</strong> Transmitted bit-for-bit directly phone-to-phone. RAW camera profiles, 4K/8K HDR, full color spaces, and complete EXIF tags are 100% preserved.</span>
         </div>
 
         <!-- Selected File Queue -->
@@ -200,7 +256,7 @@
           <!-- Beam Action Bar -->
           <div class="send-action-bar">
             <div class="target-destination-summary">
-              Destination: <span class="target-device-highlight" id="target-device-display">Partner Phone</span>
+              Destination: <span class="target-device-highlight" id="target-device-display">Partner Device</span>
             </div>
 
             <button class="btn-beam-large" id="btn-send-files">
@@ -221,7 +277,7 @@
           
           <div class="send-action-bar" style="margin-top: 0; padding-top: 0; border-top: none;">
             <div class="target-destination-summary">
-              Beam to: <span class="target-device-highlight" id="text-target-device-display">Partner Phone</span>
+              Beam to: <span class="target-device-highlight" id="text-target-device-display">Partner Device</span>
             </div>
             <button class="btn-beam-large" id="btn-send-text">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -259,7 +315,7 @@
   <div class="modal-overlay" id="modal-qr">
     <div class="modal-card">
       <div class="modal-header">
-        <h3>Pair Devices (Zero PC)</h3>
+        <h3>Pair Devices (QR Code)</h3>
         <button class="btn-icon" onclick="closeModal('modal-qr')">✕</button>
       </div>
       <div class="modal-body" style="text-align: center;">
@@ -388,10 +444,10 @@
   <!-- Toast Notification Container -->
   <div class="toast-container" id="toast-container"></div>
 
-  <!-- Unified Mobile P2P Logic -->
+  <!-- Master Logic Script -->
   <script>
     (function () {
-      const CHUNK_SIZE = 64 * 1024; // 64KB WebRTC chunks
+      const CHUNK_SIZE = 64 * 1024; // 64KB WebRTC binary chunks
       
       const state = {
         myDeviceName: getDeviceName(),
@@ -399,12 +455,14 @@
         myPeerId: null,
         peer: null,
         conn: null,
-        connectedPartner: null, // { id, name, type }
+        activeTargetPeerId: null,
+        discoveredPeers: new Map(), // peerId -> { id, name, type, lastSeen }
         fileQueue: [], // Array of { file, inspected, sha256 }
         activeTransfer: null,
         transferHistory: [],
         lastReceivedBlob: null,
-        lastReceivedName: ''
+        lastReceivedName: '',
+        wifiRoom: 'local_mesh'
       };
 
       const el = {
@@ -416,10 +474,12 @@
         peerCountBadge: document.getElementById('peer-count-badge'),
         myDeviceName: document.getElementById('my-device-name'),
         myDeviceIcon: document.getElementById('my-device-icon'),
+        radarContainerBox: document.getElementById('radar-container-box'),
+        radarNodesOverlay: document.getElementById('radar-nodes-overlay'),
         peerListContainer: document.getElementById('peer-list-container'),
         noPeersNotice: document.getElementById('no-peers-notice'),
-        targetPeerInput: document.getElementById('target-peer-input'),
-        btnManualConnect: document.getElementById('btn-manual-connect'),
+        btnChangeRoom: document.getElementById('btn-change-room'),
+        currentRoomLabel: document.getElementById('current-room-label'),
 
         tabBtnFiles: document.getElementById('tab-btn-files'),
         tabBtnText: document.getElementById('tab-btn-text'),
@@ -479,10 +539,11 @@
       // Initialize
       init();
 
-      function init() {
+      async function init() {
         el.myDeviceName.textContent = state.myDeviceName;
         updateMyDeviceIcon();
         setupEventListeners();
+        await determineWifiRoom();
         initWebRTC();
       }
 
@@ -517,6 +578,34 @@
         }
       }
 
+      // Automatic Same Wi-Fi Mesh Identification
+      async function determineWifiRoom() {
+        const savedRoom = localStorage.getItem('nexusdrop_custom_room');
+        if (savedRoom) {
+          state.wifiRoom = savedRoom;
+          el.currentRoomLabel.textContent = `Room: ${savedRoom}`;
+          return;
+        }
+
+        try {
+          const res = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(2000) });
+          const data = await res.json();
+          if (data.ip) {
+            let hash = 0;
+            for (let i = 0; i < data.ip.length; i++) {
+              hash = ((hash << 5) - hash) + data.ip.charCodeAt(i);
+              hash |= 0;
+            }
+            state.wifiRoom = 'lan_' + Math.abs(hash).toString(36);
+            el.currentRoomLabel.textContent = '📶 Same Wi-Fi';
+            return;
+          }
+        } catch (e) {}
+
+        state.wifiRoom = 'local_mesh';
+        el.currentRoomLabel.textContent = '📶 Local Room';
+      }
+
       // WebRTC PeerJS Setup with STUN
       function initWebRTC() {
         if (state.peer) {
@@ -527,7 +616,6 @@
         el.connectionDot.className = 'status-dot';
         el.connectionText.textContent = 'Connecting...';
 
-        // Collision-free unique ID
         const uniqueId = 'nx-' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36).slice(-4);
 
         try {
@@ -551,11 +639,14 @@
         state.peer.on('open', (id) => {
           state.myPeerId = id;
           el.connectionDot.className = 'status-dot online';
-          el.connectionText.textContent = 'Ready to Pair';
+          el.connectionText.textContent = 'Wi-Fi Scanning';
           el.qrIdDisplay.textContent = id;
 
           // Render QR Code
           renderQrCode(id);
+
+          // Start Automatic Wi-Fi Presence Discovery!
+          startPresenceDiscovery();
 
           // Check if partner ID was passed in URL (?join=...)
           const params = new URLSearchParams(window.location.search);
@@ -577,11 +668,10 @@
             return;
           }
           if (err.type === 'peer-unavailable') {
-            showToast('Partner phone not found or offline. Re-scan QR code.', 'error');
-            el.connectionText.textContent = 'Partner Offline';
+            showToast('Partner phone not found or offline.', 'error');
             return;
           }
-          el.connectionText.textContent = 'Connection Error (Tap)';
+          el.connectionText.textContent = 'Tap to Refresh';
         });
 
         state.peer.on('disconnected', () => {
@@ -591,6 +681,184 @@
         });
       }
 
+      // Automatic MQTT Presence Broadcast (No PC Needed)
+      let mqttClient = null;
+      function startPresenceDiscovery() {
+        if (typeof Paho === 'undefined') return;
+
+        try {
+          const clientId = 'nx_' + Math.random().toString(36).substring(2, 9);
+          mqttClient = new Paho.MQTT.Client('broker.hivemq.com', 8884, '/mqtt', clientId);
+
+          mqttClient.onMessageArrived = (message) => {
+            try {
+              const data = JSON.parse(message.payloadString);
+              if (data.id && data.id !== state.myPeerId) {
+                handleDiscoveredPeer(data);
+              }
+            } catch (e) {}
+          };
+
+          mqttClient.connect({
+            useSSL: true,
+            timeout: 4,
+            keepAliveInterval: 30,
+            cleanSession: true,
+            onSuccess: () => {
+              const topic = `nexusdrop/room/${state.wifiRoom}`;
+              mqttClient.subscribe(topic);
+              broadcastPresence();
+              setInterval(broadcastPresence, 8000); // Ping presence every 8 seconds
+            },
+            onFailure: () => {
+              // Fallback to alternative public broker
+              connectFallbackMqtt();
+            }
+          });
+        } catch (e) {
+          console.warn('Presence start failed:', e);
+        }
+      }
+
+      function connectFallbackMqtt() {
+        try {
+          const clientId = 'nx_' + Math.random().toString(36).substring(2, 9);
+          mqttClient = new Paho.MQTT.Client('broker.emqx.io', 8084, '/mqtt', clientId);
+          mqttClient.connect({
+            useSSL: true,
+            timeout: 5,
+            cleanSession: true,
+            onSuccess: () => {
+              mqttClient.subscribe(`nexusdrop/room/${state.wifiRoom}`);
+              broadcastPresence();
+            }
+          });
+        } catch (e) {}
+      }
+
+      function broadcastPresence() {
+        if (mqttClient && mqttClient.isConnected && mqttClient.isConnected() && state.myPeerId) {
+          const payload = JSON.stringify({
+            id: state.myPeerId,
+            name: state.myDeviceName,
+            deviceType: state.myDeviceType,
+            timestamp: Date.now()
+          });
+          const message = new Paho.MQTT.Message(payload);
+          message.destinationName = `nexusdrop/room/${state.wifiRoom}`;
+          mqttClient.send(message);
+        }
+      }
+
+      function handleDiscoveredPeer(peerInfo) {
+        state.discoveredPeers.set(peerInfo.id, {
+          id: peerInfo.id,
+          name: peerInfo.name,
+          type: peerInfo.deviceType,
+          lastSeen: Date.now()
+        });
+
+        // Auto select if only 1 partner
+        if (!state.activeTargetPeerId) {
+          state.activeTargetPeerId = peerInfo.id;
+        }
+
+        renderPeerList();
+        renderRadarNodes();
+      }
+
+      // Render Floating Orbiting Nodes on the Radar Screen
+      function renderRadarNodes() {
+        el.radarNodesOverlay.innerHTML = '';
+        const peers = Array.from(state.discoveredPeers.values());
+        if (peers.length === 0) return;
+
+        // Position nodes along the radar circle (radius ~85px)
+        const radius = 85;
+        const centerX = 120;
+        const centerY = 120;
+
+        peers.forEach((peer, i) => {
+          const angle = (i * (2 * Math.PI / peers.length)) - (Math.PI / 2);
+          const x = centerX + radius * Math.cos(angle) - 22;
+          const y = centerY + radius * Math.sin(angle) - 22;
+
+          const node = document.createElement('div');
+          node.className = 'radar-peer-node';
+          node.style.left = `${x}px`;
+          node.style.top = `${y}px`;
+          node.title = `${peer.name} (Click to beam)`;
+
+          node.innerHTML = `
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect width="14" height="20" x="5" y="2" rx="2" ry="2"></rect>
+              <path d="M12 18h.01"></path>
+            </svg>
+            <div class="radar-peer-label">${escapeHtml(peer.name.split(' ')[0])}</div>
+          `;
+
+          node.onclick = () => {
+            state.activeTargetPeerId = peer.id;
+            renderPeerList();
+            showToast(`Selected ${peer.name}`, 'info');
+          };
+
+          el.radarNodesOverlay.appendChild(node);
+        });
+      }
+
+      // Render Peer List in Left Column
+      function renderPeerList() {
+        const peers = Array.from(state.discoveredPeers.values());
+        
+        if (peers.length === 0) {
+          el.peerCountBadge.textContent = '0 Connected';
+          el.noPeersNotice.style.display = 'block';
+          el.peerListContainer.querySelectorAll('.peer-item').forEach(e => e.remove());
+          el.targetDeviceDisplay.textContent = 'None Detected';
+          el.textTargetDeviceDisplay.textContent = 'None Detected';
+          return;
+        }
+
+        el.peerCountBadge.textContent = `${peers.length} Nearby`;
+        el.noPeersNotice.style.display = 'none';
+        el.peerListContainer.querySelectorAll('.peer-item').forEach(e => e.remove());
+
+        peers.forEach(peer => {
+          const isSelected = state.activeTargetPeerId === peer.id;
+          if (isSelected) {
+            el.targetDeviceDisplay.textContent = peer.name;
+            el.textTargetDeviceDisplay.textContent = peer.name;
+          }
+
+          const item = document.createElement('div');
+          item.className = `peer-item ${isSelected ? 'selected' : ''}`;
+          item.innerHTML = `
+            <div class="peer-info-group">
+              <div class="peer-avatar" style="background: rgba(6, 182, 212, 0.15); color: var(--accent-cyan);">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect width="14" height="20" x="5" y="2" rx="2" ry="2"></rect>
+                  <path d="M12 18h.01"></path>
+                </svg>
+              </div>
+              <div class="peer-text">
+                <h4>${escapeHtml(peer.name)}</h4>
+                <p>Ready to Beam (Same Wi-Fi)</p>
+              </div>
+            </div>
+            <div class="peer-radio"></div>
+          `;
+
+          item.onclick = () => {
+            state.activeTargetPeerId = peer.id;
+            renderPeerList();
+          };
+
+          el.peerListContainer.appendChild(item);
+        });
+      }
+
+      // QR Code Pairing
       function renderQrCode(id) {
         el.qrCanvasBox.innerHTML = '';
         const joinUrl = `${window.location.origin}${window.location.pathname}?join=${id}`;
@@ -644,8 +912,13 @@
           triggerHaptic();
 
           const partnerName = connection.metadata?.name || 'Partner Device';
-          const partnerType = connection.metadata?.type || 'mobile';
-          state.connectedPartner = { id: connection.peer, name: partnerName, type: partnerType };
+          state.activeTargetPeerId = connection.peer;
+          state.discoveredPeers.set(connection.peer, {
+            id: connection.peer,
+            name: partnerName,
+            type: connection.metadata?.type || 'mobile',
+            lastSeen: Date.now()
+          });
 
           el.connectionDot.className = 'status-dot online';
           el.connectionText.textContent = 'Connected (P2P)';
@@ -653,8 +926,8 @@
           closeModal('modal-qr');
 
           renderPeerList();
+          renderRadarNodes();
 
-          // Send handshake greeting with my identity
           state.conn.send({
             type: 'handshake-identity',
             name: state.myDeviceName,
@@ -667,51 +940,12 @@
         });
 
         state.conn.on('close', () => {
-          state.connectedPartner = null;
           state.conn = null;
           el.connectionDot.className = 'status-dot online';
-          el.connectionText.textContent = 'Ready to Pair';
+          el.connectionText.textContent = 'Wi-Fi Scanning';
           renderPeerList();
           showToast('Partner device disconnected.', 'info');
         });
-      }
-
-      function renderPeerList() {
-        if (!state.connectedPartner) {
-          el.peerCountBadge.textContent = '0 Connected';
-          el.noPeersNotice.style.display = 'block';
-          el.peerListContainer.querySelectorAll('.peer-item').forEach(e => e.remove());
-          el.targetDeviceDisplay.textContent = 'None Paired';
-          el.textTargetDeviceDisplay.textContent = 'None Paired';
-          return;
-        }
-
-        el.peerCountBadge.textContent = '1 Connected';
-        el.noPeersNotice.style.display = 'none';
-        el.peerListContainer.querySelectorAll('.peer-item').forEach(e => e.remove());
-
-        const partner = state.connectedPartner;
-        el.targetDeviceDisplay.textContent = partner.name;
-        el.textTargetDeviceDisplay.textContent = partner.name;
-
-        const item = document.createElement('div');
-        item.className = 'peer-item selected';
-        item.innerHTML = `
-          <div class="peer-info-group">
-            <div class="peer-avatar" style="background: rgba(6, 182, 212, 0.15); color: var(--accent-cyan);">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect width="14" height="20" x="5" y="2" rx="2" ry="2"></rect>
-                <path d="M12 18h.01"></path>
-              </svg>
-            </div>
-            <div class="peer-text">
-              <h4>${escapeHtml(partner.name)}</h4>
-              <p>Direct WebRTC P2P (Ready to Beam)</p>
-            </div>
-          </div>
-          <div class="peer-radio"></div>
-        `;
-        el.peerListContainer.appendChild(item);
       }
 
       // Handle Files Staging
@@ -843,10 +1077,19 @@
       // Sender: Initiate Transfer Handshake (AirDrop Gate)
       function initiateTransfer() {
         if (state.fileQueue.length === 0) return;
+
+        // Auto-connect if needed
         if (!state.conn || !state.conn.open) {
-          showToast('No partner phone connected. Tap "Pair Device" first!', 'error');
-          openModal('modal-qr');
-          return;
+          if (state.activeTargetPeerId) {
+            connectToPartner(state.activeTargetPeerId);
+            showToast('Opening secure P2P link...', 'info');
+            setTimeout(initiateTransfer, 1200);
+            return;
+          } else {
+            showToast('Please select a device from the radar or tap "Pair QR"', 'error');
+            openModal('modal-qr');
+            return;
+          }
         }
 
         const totalBytes = state.fileQueue.reduce((acc, item) => acc + item.file.size, 0);
@@ -863,17 +1106,15 @@
           isSender: true
         };
 
-        // Open progress modal on sender in "waiting" state
         el.progressModalTitle.textContent = 'Awaiting Recipient Acceptance...';
         el.progressFileName.textContent = state.fileQueue[0].file.name;
         el.progressBarFill.style.width = '0%';
-        el.progressSpeed.textContent = 'Waiting for partner...';
+        el.progressSpeed.textContent = 'Prompting partner...';
         el.progressBytesLabel.textContent = `0 / ${formatBytes(totalBytes)}`;
-        el.progressEtaLabel.textContent = 'Prompting partner...';
+        el.progressEtaLabel.textContent = 'Waiting for accept...';
         el.progressDownloadActions.style.display = 'none';
         openModal('modal-transfer-progress');
 
-        // Send transfer request over WebRTC DataChannel
         state.conn.send({
           type: 'transfer-request',
           senderName: state.myDeviceName,
@@ -896,7 +1137,6 @@
           const file = item.file;
           el.progressFileName.textContent = `(${i + 1}/${queue.length}) ${file.name}`;
 
-          // Tell receiver about this file
           state.conn.send({
             type: 'file-start',
             name: file.name,
@@ -904,7 +1144,6 @@
             mime: file.type || 'application/octet-stream'
           });
 
-          // Stream chunks with backpressure
           let offset = 0;
           let counter = 0;
           while (offset < file.size) {
@@ -942,7 +1181,6 @@
 
           totalBytesSent += file.size;
 
-          // End file
           state.conn.send({ type: 'file-end' });
 
           addToHistory({
@@ -977,14 +1215,14 @@
       async function handleIncomingMessage(msg) {
         switch (msg.type) {
           case 'handshake-identity':
-            if (state.connectedPartner) {
-              state.connectedPartner.name = msg.name;
-              state.connectedPartner.type = msg.deviceType;
+            if (state.discoveredPeers.has(state.conn.peer)) {
+              const p = state.discoveredPeers.get(state.conn.peer);
+              p.name = msg.name;
+              p.type = msg.deviceType;
               renderPeerList();
             }
             break;
 
-          // Transfer Request (AirDrop Gate Prompt)
           case 'transfer-request':
             playNotificationSound();
             triggerHaptic();
@@ -1019,7 +1257,6 @@
             showToast('Partner declined the transfer.', 'error');
             break;
 
-          // File Streaming Packets
           case 'file-start':
             currentFileMeta = msg;
             receivedChunks = [];
@@ -1053,7 +1290,6 @@
               state.lastReceivedBlob = blob;
               state.lastReceivedName = fileName;
 
-              // Immediately show completion and download buttons
               el.progressModalTitle.textContent = 'Received (100% Quality Kept)!';
               el.progressBarFill.style.width = '100%';
               el.progressSpeed.textContent = 'Finished';
@@ -1065,7 +1301,6 @@
               el.linkDirectDownload.download = fileName;
               el.linkDirectDownload.textContent = `💾 Direct Download (${formatBytes(blob.size)})`;
 
-              // Trigger download
               triggerSaveFile(blob, fileName);
 
               addToHistory({
@@ -1092,7 +1327,6 @@
         }
       }
 
-      // Receiver accepts transfer
       function acceptTransfer() {
         closeModal('modal-transfer-prompt');
         if (!state.activeTransfer || !state.conn) return;
@@ -1133,7 +1367,6 @@
         } catch (e) {}
       }
 
-      // Text Sharing
       function sendSharedText() {
         const text = el.textShareInput.value.trim();
         if (!text) {
@@ -1155,7 +1388,6 @@
         el.textShareInput.value = '';
       }
 
-      // History Management
       function addToHistory(item) {
         state.transferHistory.unshift(item);
         renderHistory();
@@ -1216,23 +1448,32 @@
         });
       }
 
-      // Event Listeners
       function setupEventListeners() {
-        el.btnReconnect.onclick = initWebRTC;
+        el.btnReconnect.onclick = () => {
+          showToast('Refreshing Wi-Fi presence...', 'info');
+          initWebRTC();
+        };
+
         el.btnOpenPair.onclick = () => openModal('modal-qr');
         el.btnQuickPairTrigger.onclick = () => openModal('modal-qr');
+
+        el.btnChangeRoom.onclick = () => {
+          const newRoom = prompt('Enter a shared Room Name (devices with the same Room Name find each other automatically):', state.wifiRoom);
+          if (newRoom && newRoom.trim()) {
+            const trimmed = newRoom.trim();
+            localStorage.setItem('nexusdrop_custom_room', trimmed);
+            state.wifiRoom = trimmed;
+            el.currentRoomLabel.textContent = `Room: ${trimmed}`;
+            showToast(`Joined Room: ${trimmed}`, 'success');
+            startPresenceDiscovery();
+          }
+        };
 
         el.btnCopyUrl.onclick = () => {
           navigator.clipboard.writeText(el.qrUrlInput.value);
           showToast('Pairing link copied!', 'success');
         };
 
-        el.btnManualConnect.onclick = () => {
-          const target = el.targetPeerInput.value.trim();
-          if (target) connectToPartner(target);
-        };
-
-        // Tabs
         el.tabBtnFiles.onclick = () => {
           el.tabBtnFiles.classList.add('active');
           el.tabBtnText.classList.remove('active');
@@ -1247,7 +1488,6 @@
           el.tabContentFiles.style.display = 'none';
         };
 
-        // Dropzone & Pickers
         const dz = el.fileDropzone;
         ['dragenter', 'dragover'].forEach(n => dz.addEventListener(n, e => { e.preventDefault(); dz.classList.add('drag-active'); }));
         ['dragleave', 'drop'].forEach(n => dz.addEventListener(n, e => { e.preventDefault(); dz.classList.remove('drag-active'); }));
@@ -1271,7 +1511,6 @@
         el.btnAcceptTransfer.onclick = acceptTransfer;
         el.btnDeclineTransfer.onclick = declineTransfer;
 
-        // Save to Photos (Web Share API)
         el.btnSaveToPhotos.onclick = async () => {
           if (!state.lastReceivedBlob) return;
           try {
@@ -1290,7 +1529,6 @@
         };
       }
 
-      // Audio Synthesis
       function playNotificationSound() {
         try {
           const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1381,8 +1619,15 @@
           .replace(/'/g, '&#039;');
       }
 
-      // PWA Service Worker
+      // Force unregister stale service worker caches & register fresh v3
       if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(regs => {
+          for (let reg of regs) reg.update();
+        });
+        if (window.caches) {
+          caches.delete('nexusdrop-v1');
+          caches.delete('nexusdrop-v2');
+        }
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('./sw.js').catch(() => {});
         });
