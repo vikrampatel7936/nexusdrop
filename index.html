@@ -434,27 +434,32 @@
       } else if (msg.type === 'file-end') {
         // Assemble Blob
         const blob = new Blob(receivedChunks, { type: currentIncomingFile.mime });
+        const fileName = currentIncomingFile.name;
         
         // Verify SHA-256
         crypto.subtle.digest('SHA-256', blob.arrayBuffer()).then(hashBuf => {
           const actualHash = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
           const isVerified = actualHash === currentIncomingFile.sha256;
 
-          activeIncomingCard.complete(actualHash, isVerified);
+          activeIncomingCard.complete(actualHash, isVerified, blob, fileName);
 
-          // Trigger download / save on mobile
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = currentIncomingFile.name;
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(() => {
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-          }, 300);
+          // Auto-trigger download
+          triggerSaveFile(blob, fileName);
         });
       }
+    }
+
+    // Helper: Trigger file saving
+    function triggerSaveFile(blob, fileName) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+      }, 2000);
     }
 
     // Helper: Create UI Card for transfers
@@ -490,15 +495,44 @@
           fill.style.width = p + '%';
           percentLbl.textContent = p + '%';
         },
-        complete: (hash, isVerified = true) => {
+        complete: (hash, isVerified = true, blob = null, fileName = '') => {
           fill.style.width = '100%';
-          statusLbl.textContent = 'Completed (100% Quality Kept)';
+          statusLbl.textContent = 'Received (100% Quality Kept)';
           percentLbl.textContent = '100%';
           verifiedContainer.innerHTML = `
             <div class="verified-badge">
               ✔ Bit-Exact SHA-256 Verified (${hash.slice(0, 8)}...)
             </div>
+            ${blob ? `
+              <div style="margin-top: 10px; display: flex; gap: 8px;">
+                <button class="btn btn-save-action" style="padding: 8px 14px; font-size: 0.85rem; margin-top: 0; background: linear-gradient(135deg, #10b981, #059669);">
+                  📥 Save to Camera Roll / Downloads
+                </button>
+              </div>
+            ` : ''}
           `;
+
+          if (blob) {
+            const btn = verifiedContainer.querySelector('.btn-save-action');
+            if (btn) {
+              btn.onclick = async () => {
+                // Try Web Share API (allows direct "Save to Photos" on iPhone!)
+                try {
+                  const file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+                  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                    await navigator.share({
+                      files: [file],
+                      title: fileName
+                    });
+                    return;
+                  }
+                } catch (e) {
+                  // User cancelled or share dismissed
+                }
+                triggerSaveFile(blob, fileName);
+              };
+            }
+          }
         }
       };
     }
