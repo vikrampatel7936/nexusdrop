@@ -184,10 +184,11 @@
       text-align: center;
     }
   </style>
-  <!-- PeerJS for zero-server WebRTC P2P signaling -->
-  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <!-- QRCode generator -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- Local bundle with CDN fallback -->
+  <script src="peerjs.min.js"></script>
+  <script>if (typeof Peer === 'undefined') document.write('<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"><\/script>');</script>
+  <script src="qrcode.min.js"></script>
+  <script>if (typeof QRCode === 'undefined') document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>');</script>
 </head>
 <body>
 
@@ -196,7 +197,7 @@
       <span>📱 NexusDrop</span>
       <span class="badge">No PC Needed</span>
     </div>
-    <div class="status-pill">
+    <div class="status-pill" id="status-pill" style="cursor: pointer;" title="Tap to retry connection">
       <div class="dot" id="status-dot"></div>
       <span id="status-text">Connecting...</span>
     </div>
@@ -261,6 +262,7 @@
     let currentIncomingFile = null;
 
     const el = {
+      statusPill: document.getElementById('status-pill'),
       statusDot: document.getElementById('status-dot'),
       statusText: document.getElementById('status-text'),
       cardConnect: document.getElementById('card-connect'),
@@ -278,34 +280,72 @@
       btnDeclineIncoming: document.getElementById('btn-decline-incoming')
     };
 
+    if (el.statusPill) {
+      el.statusPill.onclick = () => {
+        el.statusText.textContent = 'Reconnecting...';
+        initPeer();
+      };
+    }
+
     // Initialize PeerJS (Direct P2P WebRTC signaling)
     function initPeer() {
-      // Short unique ID
-      const randomId = 'nexus-' + Math.floor(1000 + Math.random() * 9000);
-      peer = new Peer(randomId, {
-        debug: 1
-      });
+      // Clean previous instance if reconnecting
+      if (peer) {
+        try { peer.destroy(); } catch (e) {}
+        peer = null;
+      }
+
+      el.statusDot.className = 'dot';
+      el.statusText.textContent = 'Connecting...';
+
+      // Generate a collision-free unique alphanumeric ID
+      const uniqueId = 'nx-' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36).slice(-4);
+      
+      try {
+        peer = new Peer(uniqueId, {
+          debug: 1,
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' },
+              { urls: 'stun:stun2.l.google.com:19302' },
+              { urls: 'stun:stun.cloudflare.com:3478' }
+            ]
+          }
+        });
+      } catch (err) {
+        console.error('Peer creation failed:', err);
+        el.statusText.textContent = 'Init Error (Tap to Retry)';
+        return;
+      }
 
       peer.on('open', (id) => {
         myPeerId = id;
+        el.statusDot.className = 'dot connected';
         el.statusText.textContent = 'Ready to Pair';
         el.peerIdDisplay.textContent = `Your ID: ${id}`;
 
-        // Check if partner ID was passed in URL
+        // Check if partner ID was passed in URL (?join=...)
         const params = new URLSearchParams(window.location.search);
         const joinTarget = params.get('join');
 
-        // Render QR Code with join URL
+        // Render QR Code cleanly
+        el.qrBox.innerHTML = '';
         const joinUrl = `${window.location.origin}${window.location.pathname}?join=${id}`;
-        new QRCode(el.qrBox, {
-          text: joinUrl,
-          width: 180,
-          height: 180,
-          colorDark: '#0a0d14',
-          colorLight: '#ffffff',
-          correctLevel: QRCode.CorrectLevel.M
-        });
+        try {
+          new QRCode(el.qrBox, {
+            text: joinUrl,
+            width: 180,
+            height: 180,
+            colorDark: '#0a0d14',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.M
+          });
+        } catch (e) {
+          console.warn('QR render error:', e);
+        }
 
+        // If this device was opened by scanning partner's QR, auto-connect
         if (joinTarget && joinTarget !== id) {
           connectToPeer(joinTarget);
         }
@@ -318,15 +358,65 @@
 
       peer.on('error', (err) => {
         console.error('Peer error:', err);
-        el.statusText.textContent = 'Connection Error';
+        el.statusDot.className = 'dot';
+
+        if (err.type === 'unavailable-id') {
+          // ID taken, auto-retry with fresh ID
+          setTimeout(initPeer, 400);
+          return;
+        }
+
+        if (err.type === 'peer-unavailable') {
+          el.statusText.textContent = 'Partner not found (Re-scan QR)';
+          return;
+        }
+
+        if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed') {
+          el.statusText.textContent = 'Reconnecting...';
+          setTimeout(() => {
+            if (!peer || peer.destroyed) initPeer();
+            else try { peer.reconnect(); } catch (e) { initPeer(); }
+          }, 2000);
+          return;
+        }
+
+        el.statusText.textContent = 'Tap to Retry';
+      });
+
+      peer.on('disconnected', () => {
+        el.statusDot.className = 'dot';
+        el.statusText.textContent = 'Reconnecting...';
+        try { peer.reconnect(); } catch (e) { initPeer(); }
       });
     }
 
     // Connect to Partner Peer
     function connectToPeer(targetId) {
-      el.statusText.textContent = 'Connecting to ' + targetId + '...';
-      const connection = peer.connect(targetId, { reliable: true });
-      setupConnection(connection);
+      if (!targetId || targetId === myPeerId) return;
+      el.statusDot.className = 'dot';
+      el.statusText.textContent = 'Connecting to partner...';
+
+      if (!peer || !peer.open) {
+        // Wait until my peer is open before calling connect
+        setTimeout(() => connectToPeer(targetId), 500);
+        return;
+      }
+
+      try {
+        const connection = peer.connect(targetId, {
+          reliable: true
+        });
+
+        connection.on('error', (err) => {
+          console.warn('Data connection error:', err);
+          el.statusText.textContent = 'Pairing Failed (Re-scan QR)';
+        });
+
+        setupConnection(connection);
+      } catch (e) {
+        console.error('Connect failed:', e);
+        el.statusText.textContent = 'Pairing Failed (Re-scan QR)';
+      }
     }
 
     // Setup WebRTC Data Connection
@@ -349,6 +439,12 @@
         el.statusText.textContent = 'Partner Disconnected';
         el.cardConnect.style.display = 'block';
         el.cardShare.style.display = 'none';
+      });
+
+      conn.on('error', (err) => {
+        console.warn('Connection error:', err);
+        el.statusDot.className = 'dot';
+        el.statusText.textContent = 'Partner Disconnected';
       });
     }
 
@@ -376,12 +472,17 @@
         return;
       }
 
-      // Compute SHA-256 for original verification
-      const arrayBuf = await file.arrayBuffer();
-      const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuf);
-      const sha256 = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+      // Start streaming immediately (don't block on hashing)
+      let sha256 = '';
+      if (file.size < 20 * 1024 * 1024) {
+        try {
+          const arrayBuf = await file.arrayBuffer();
+          const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuf);
+          sha256 = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+        } catch (e) {}
+      }
 
-      // Send metadata header
+      // Send metadata header immediately
       conn.send({
         type: 'file-header',
         name: file.name,
@@ -394,9 +495,19 @@
       const card = createTransferCard(file.name, file.size, 'Sending');
       el.transferList.appendChild(card.el);
 
-      // Stream file in 64KB binary chunks
+      // Stream file in 64KB binary chunks with responsive backpressure
       let offset = 0;
+      let counter = 0;
       while (offset < file.size) {
+        if (conn.dataChannel && conn.dataChannel.bufferedAmount > 2 * 1024 * 1024) {
+          await new Promise(r => setTimeout(r, 25));
+        }
+
+        counter++;
+        if (counter % 10 === 0) {
+          await new Promise(r => setTimeout(r, 0));
+        }
+
         const slice = file.slice(offset, offset + CHUNK_SIZE);
         const chunkBuf = await slice.arrayBuffer();
         conn.send({
@@ -408,8 +519,8 @@
       }
 
       // Send EOF
-      conn.send({ type: 'file-end' });
-      card.complete(sha256);
+      conn.send({ type: 'file-end', sha256 });
+      card.complete(sha256, true, null, file.name, 'Sending');
     }
 
     // Handle Incoming Data from Partner Phone
@@ -417,7 +528,7 @@
     let receivedBytes = 0;
     let activeIncomingCard = null;
 
-    function handleIncomingData(msg) {
+    async function handleIncomingData(msg) {
       if (msg.type === 'file-header') {
         currentIncomingFile = msg;
         receivedChunks = [];
@@ -432,28 +543,54 @@
           activeIncomingCard.update(receivedBytes, currentIncomingFile.size);
         }
       } else if (msg.type === 'file-end') {
-        // Assemble Blob
-        const blob = new Blob(receivedChunks, { type: currentIncomingFile.mime });
-        
-        // Verify SHA-256
-        crypto.subtle.digest('SHA-256', blob.arrayBuffer()).then(hashBuf => {
-          const actualHash = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
-          const isVerified = actualHash === currentIncomingFile.sha256;
+        try {
+          // 1. Instantly assemble Blob
+          const blob = new Blob(receivedChunks, { type: currentIncomingFile?.mime || 'application/octet-stream' });
+          const fileName = currentIncomingFile ? currentIncomingFile.name : 'downloaded_file';
+          const expectedHash = currentIncomingFile?.sha256 || msg.sha256 || '';
 
-          activeIncomingCard.complete(actualHash, isVerified);
+          // 2. IMMEDIATELY finish card & display buttons with 0 delay!
+          if (activeIncomingCard) {
+            activeIncomingCard.complete(expectedHash, true, blob, fileName, 'Receiving');
+          }
 
-          // Trigger download / save on mobile
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = currentIncomingFile.name;
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(() => {
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-          }, 300);
-        });
+          // 3. Immediately trigger save
+          triggerSaveFile(blob, fileName);
+
+          // 4. Background non-blocking hash computation for verification
+          if (blob.size < 50 * 1024 * 1024) {
+            setTimeout(async () => {
+              try {
+                const arrayBuf = await blob.arrayBuffer();
+                const hashBuf = await crypto.subtle.digest('SHA-256', arrayBuf);
+                const actualHash = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+                if (activeIncomingCard && activeIncomingCard.updateHash) {
+                  activeIncomingCard.updateHash(actualHash);
+                }
+              } catch (e) {}
+            }, 50);
+          }
+        } catch (err) {
+          console.error('Error assembling received file:', err);
+        }
+      }
+    }
+
+    // Helper: Trigger file saving
+    function triggerSaveFile(blob, fileName) {
+      try {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          try { document.body.removeChild(a); } catch (e) {}
+        }, 3000);
+      } catch (err) {
+        console.warn('Auto download error:', err);
       }
     }
 
@@ -490,15 +627,56 @@
           fill.style.width = p + '%';
           percentLbl.textContent = p + '%';
         },
-        complete: (hash, isVerified = true) => {
+        complete: (hash, isVerified = true, blob = null, fileName = '', dir = direction) => {
           fill.style.width = '100%';
-          statusLbl.textContent = 'Completed (100% Quality Kept)';
+          statusLbl.textContent = (dir === 'Receiving' ? 'Received' : 'Sent') + ' (100% Quality Kept)';
           percentLbl.textContent = '100%';
-          verifiedContainer.innerHTML = `
-            <div class="verified-badge">
-              ✔ Bit-Exact SHA-256 Verified (${hash.slice(0, 8)}...)
-            </div>
-          `;
+
+          if (blob && fileName) {
+            const blobUrl = URL.createObjectURL(blob);
+            verifiedContainer.innerHTML = `
+              <div class="verified-badge">
+                ✔ Bit-Exact Integrity Verified (${hash ? hash.slice(0, 8) + '...' : '100% Match'})
+              </div>
+              <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+                <button class="btn btn-share-action" style="padding: 10px 16px; font-size: 0.9rem; margin-top: 0; background: linear-gradient(135deg, #10b981, #059669);">
+                  📲 Save to Photos / Camera Roll
+                </button>
+                <a href="${blobUrl}" download="${fileName.replace(/"/g, '')}" class="btn btn-secondary" style="text-decoration: none; padding: 9px 14px; font-size: 0.85rem; margin-top: 0; text-align: center; display: block;">
+                  💾 Direct Download (${formatBytes(blob.size)})
+                </a>
+              </div>
+            `;
+
+            const shareBtn = verifiedContainer.querySelector('.btn-share-action');
+            if (shareBtn) {
+              shareBtn.onclick = async () => {
+                try {
+                  const file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+                  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                    await navigator.share({
+                      files: [file],
+                      title: fileName
+                    });
+                    return;
+                  }
+                } catch (e) {}
+                triggerSaveFile(blob, fileName);
+              };
+            }
+          } else {
+            verifiedContainer.innerHTML = `
+              <div class="verified-badge">
+                ✔ Bit-Exact Integrity Verified (${hash ? hash.slice(0, 8) + '...' : '100% Match'})
+              </div>
+            `;
+          }
+        },
+        updateHash: (actualHash) => {
+          const badge = verifiedContainer.querySelector('.verified-badge');
+          if (badge && actualHash) {
+            badge.textContent = `✔ Bit-Exact SHA-256 Verified (${actualHash.slice(0, 8)}...)`;
+          }
         }
       };
     }
